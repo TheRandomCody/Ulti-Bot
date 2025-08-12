@@ -13,7 +13,7 @@ module.exports = {
     async execute(interaction) {
         const target = interaction.options.getUser('target');
         // This URL tells the bot to talk to your local web server
-        const apiUrl = `https://ulti-dash-backend.onrender.com/api/user/${target.id}`;
+        const apiUrl = `https://api.ulti-bot.com/api/user/${target.id}`;
 
         try {
             // Make a GET request to your website's API
