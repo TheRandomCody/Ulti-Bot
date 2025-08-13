@@ -1,57 +1,56 @@
-const { Events, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+// events/guildMemberAdd.js
+const { Events } = require('discord.js');
 const axios = require('axios');
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
 
 module.exports = {
     name: Events.GuildMemberAdd,
     async execute(member) {
-        const guildId = member.guild.id;
-        const settingsApiUrl = `https://api.ulti-bot.com/api/settings/${guildId}`;
-
         try {
-            // Fetch the verification settings for this server from your API
-            const response = await axios.get(settingsApiUrl);
-            const settings = response.data;
-
-            // If verification isn't enabled for this server, do nothing.
-            if (!settings || !settings.verificationChannelId || !settings.unverifiedRoleId) {
-                return;
-            }
-
-            const channel = member.guild.channels.cache.get(settings.verificationChannelId);
-            if (!channel) return;
-
-            // Give the user the unverified role
-            await member.roles.add(settings.unverifiedRoleId);
-
-            // Create the verification button
-            const verifyButton = new ButtonBuilder()
-                .setLabel('Verify Here')
-                .setURL(`https://www.ulti-bot.com/verify?id=${member.id}&guild=${guildId}`) // Pass both user and guild ID
-                .setStyle(ButtonStyle.Link);
-
-            const row = new ActionRowBuilder().addComponents(verifyButton);
-
-            // Create the embed
-            const embed = new EmbedBuilder()
-                .setColor(0xE50000)
-                .setTitle('Welcome to the Server!')
-                .setDescription(`Hello ${member.user}, to gain access to the rest of the server, you must verify your account. Please click the button below to proceed.`)
-                .setThumbnail(member.user.displayAvatarURL());
-
-            // Send the message
-            await channel.send({
-                content: `Welcome, ${member}!`,
-                embeds: [embed],
-                components: [row]
+            // Ask the backend what to do with this new member
+            const response = await axios.post('https://api.ulti-bot.com/api/bot/member-join', 
+            {
+                guildId: member.guild.id,
+                userId: member.id
+            },
+            {
+                headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
             });
 
-        } catch (error) {
-            // If the API returns a 404, it means settings aren't configured. We can safely ignore this.
-            if (error.response && error.response.status === 404) {
-                console.log(`No verification settings found for guild ${guildId}.`);
-            } else {
-                console.error(`Failed to handle new member in guild ${guildId}:`, error);
+            const { action, reason, rolesToAdd } = response.data;
+
+            switch (action) {
+                case 'kick':
+                    await member.kick(reason);
+                    console.log(`Kicked ${member.user.tag} from ${member.guild.name}. Reason: ${reason}`);
+                    break;
+                
+                case 'ban':
+                    await member.ban({ reason: reason });
+                    console.log(`Banned ${member.user.tag} from ${member.guild.name}. Reason: ${reason}`);
+                    break;
+
+                case 'give_role':
+                    if (rolesToAdd && rolesToAdd.length > 0) {
+                        for (const roleId of rolesToAdd) {
+                            const role = member.guild.roles.cache.get(roleId);
+                            if (role) {
+                                await member.roles.add(role);
+                            }
+                        }
+                        console.log(`Gave role(s) to ${member.user.tag} in ${member.guild.name}.`);
+                    }
+                    break;
+
+                case 'none':
+                default:
+                    console.log(`Took no action for ${member.user.tag} joining ${member.guild.name}.`);
+                    break;
             }
+
+        } catch (error) {
+            console.error(`Failed to process new member ${member.user.tag} in guild ${member.guild.id}:`, error.response ? error.response.data : error.message);
         }
     },
 };
