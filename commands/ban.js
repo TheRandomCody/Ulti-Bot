@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const axios = require('axios');
 
 // This should be stored securely as an environment variable in Render
@@ -36,24 +36,57 @@ module.exports = {
                 headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
             });
 
-            const { permission } = response.data;
+            const { permission, authLogChannelId, authRequestStyle } = response.data;
 
             switch (permission) {
                 case 'full':
-                    // User has full permission, proceed with the ban
                     await banUser(interaction, targetMember, reason);
                     break;
                 case 'auth':
-                    // User requires authorization
-                    await interaction.reply({ content: 'This action requires authorization. Request sent to senior staff.', ephemeral: true });
-                    // (Future logic for the approval queue goes here)
+                    if (!authLogChannelId) {
+                        return interaction.reply({ content: 'The authorization log channel has not been set up for this server.', ephemeral: true });
+                    }
+                    const authChannel = await interaction.guild.channels.fetch(authLogChannelId);
+                    if (!authChannel) {
+                        return interaction.reply({ content: 'The configured authorization log channel could not be found.', ephemeral: true });
+                    }
+
+                    // NEW: Check the authorization style
+                    if (authRequestStyle === 'reaction') {
+                        // Send a simple message with reactions
+                        const authMessage = await authChannel.send(`**Authorization Required: Ban**\n**Moderator:** ${interaction.user.tag}\n**Target:** ${target.tag}\n**Reason:** ${reason}`);
+                        await authMessage.react('✅'); // Approve
+                        await authMessage.react('❌'); // Deny
+                    } else {
+                        // Default to sending an embed with buttons
+                        const authEmbed = new EmbedBuilder()
+                            .setColor(0xFFD700)
+                            .setTitle('Authorization Required: Ban')
+                            .setDescription(`**Moderator:** ${interaction.user.tag}\n**Target:** ${target.tag}\n**Reason:** ${reason}`)
+                            .setTimestamp()
+                            .setFooter({ text: `Moderator ID: ${interaction.user.id} | Target ID: ${target.id}` });
+
+                        const approveButton = new ButtonBuilder()
+                            .setCustomId(`approve-ban_${interaction.user.id}_${target.id}`)
+                            .setLabel('Approve')
+                            .setStyle(ButtonStyle.Success);
+
+                        const denyButton = new ButtonBuilder()
+                            .setCustomId(`deny-ban_${interaction.user.id}_${target.id}`)
+                            .setLabel('Deny')
+                            .setStyle(ButtonStyle.Danger);
+                            
+                        const row = new ActionRowBuilder().addComponents(approveButton, denyButton);
+
+                        await authChannel.send({ embeds: [authEmbed], components: [row] });
+                    }
+                    
+                    await interaction.reply({ content: 'This action requires authorization. Your request has been sent to the staff authorization channel.', ephemeral: true });
                     break;
                 case 'none':
-                    // User has no permission
                     await interaction.reply({ content: "You do not have permission to use this command according to the server's staff hierarchy.", ephemeral: true });
                     return;
                 case 'use_default':
-                    // Hierarchy is disabled, use default Discord permissions
                     if (!member.permissions.has(PermissionFlagsBits.BanMembers)) {
                          return interaction.reply({ content: 'You do not have the default Discord permission to ban members.', ephemeral: true });
                     }
@@ -73,17 +106,29 @@ module.exports = {
 // Helper function to handle the actual ban logic
 async function banUser(interaction, targetMember, reason) {
     if (!targetMember) {
+        if (interaction.replied || interaction.deferred) {
+            return interaction.followUp({ content: "That user isn't in this server.", ephemeral: true });
+        }
         return interaction.reply({ content: "That user isn't in this server.", ephemeral: true });
     }
     if (!targetMember.bannable) {
+        if (interaction.replied || interaction.deferred) {
+            return interaction.followUp({ content: "I can't ban that user. They may have a higher role than me.", ephemeral: true });
+        }
         return interaction.reply({ content: "I can't ban that user. They may have a higher role than me.", ephemeral: true });
     }
 
     try {
         await targetMember.ban({ reason: reason });
+        if (interaction.replied || interaction.deferred) {
+            return interaction.followUp({ content: `Successfully banned ${targetMember.user.tag} for reason: ${reason}` });
+        }
         await interaction.reply({ content: `Successfully banned ${targetMember.user.tag} for reason: ${reason}` });
     } catch (error) {
         console.error("Failed to ban member:", error);
+        if (interaction.replied || interaction.deferred) {
+            return interaction.followUp({ content: 'An error occurred while trying to ban this member.', ephemeral: true });
+        }
         await interaction.reply({ content: 'An error occurred while trying to ban this member.', ephemeral: true });
     }
 }
