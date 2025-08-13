@@ -1,9 +1,13 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const axios = require('axios');
+
+// This should be stored securely as an environment variable in Render
+const BOT_TOKEN = process.env.BOT_TOKEN;
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('kick')
-        .setDescription('Select a member and kick them from the server.')
+        .setDescription('Kicks a member from the server.')
         .addUserOption(option =>
             option
                 .setName('target')
@@ -12,33 +16,74 @@ module.exports = {
         .addStringOption(option =>
             option
                 .setName('reason')
-                .setDescription('The reason for kicking the member'))
+                .setDescription('The reason for the kick'))
         .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
-        .setDMPermission(false), // This command can only be used in servers
+        .setDMPermission(false),
     async execute(interaction) {
         const target = interaction.options.getUser('target');
         const reason = interaction.options.getString('reason') ?? 'No reason provided';
-
-        // Get the member object for the user who ran the command
         const member = await interaction.guild.members.fetch(interaction.user.id);
-
-        // Get the member object for the target user
         const targetMember = await interaction.guild.members.fetch(target.id);
 
-        if (!targetMember) {
-            return interaction.reply({ content: "That user isn't in this server.", ephemeral: true });
-        }
+        // --- PERMISSION CHECK ---
+        try {
+            const response = await axios.post(`https://api.ulti-bot.com/api/guild/${interaction.guild.id}/check-permissions`, 
+            {
+                userId: member.id,
+                userRoles: Array.from(member.roles.cache.keys())
+            },
+            {
+                headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
+            });
 
-        if (!targetMember.kickable) {
-            return interaction.reply({ content: "I can't kick that user. They may have a higher role than me.", ephemeral: true });
-        }
-        
-        if (targetMember.roles.highest.position >= member.roles.highest.position) {
-             return interaction.reply({ content: "You can't kick a member with an equal or higher role than you.", ephemeral: true });
-        }
+            const { permission } = response.data;
 
-        await targetMember.kick(reason);
+            switch (permission) {
+                case 'full':
+                    // User has full permission, proceed with the kick
+                    await kickUser(interaction, targetMember, reason);
+                    break;
+                case 'auth':
+                    // User requires authorization
+                    await interaction.reply({ content: 'This action requires authorization. Request sent to senior staff.', ephemeral: true });
+                    // (Future logic for the approval queue goes here)
+                    break;
+                case 'none':
+                    // User has no permission
+                    await interaction.reply({ content: "You do not have permission to use this command according to the server's staff hierarchy.", ephemeral: true });
+                    return;
+                case 'use_default':
+                    // Hierarchy is disabled, use default Discord permissions
+                    if (!member.permissions.has(PermissionFlagsBits.KickMembers)) {
+                         return interaction.reply({ content: 'You do not have the default Discord permission to kick members.', ephemeral: true });
+                    }
+                    await kickUser(interaction, targetMember, reason);
+                    break;
+                default:
+                    await interaction.reply({ content: 'Could not determine your permissions. Please contact the server owner.', ephemeral: true });
+            }
 
-        await interaction.reply({ content: `Kicked ${target.username} for reason: ${reason}` });
+        } catch (error) {
+            console.error("Permission check API call failed:", error);
+            await interaction.reply({ content: 'An error occurred while checking your permissions.', ephemeral: true });
+        }
     },
 };
+
+// Helper function to handle the actual kick logic
+async function kickUser(interaction, targetMember, reason) {
+    if (!targetMember) {
+        return interaction.reply({ content: "That user isn't in this server.", ephemeral: true });
+    }
+    if (!targetMember.kickable) {
+        return interaction.reply({ content: "I can't kick that user. They may have a higher role than me.", ephemeral: true });
+    }
+
+    try {
+        await targetMember.kick(reason);
+        await interaction.reply({ content: `Successfully kicked ${targetMember.user.tag} for reason: ${reason}` });
+    } catch (error) {
+        console.error("Failed to kick member:", error);
+        await interaction.reply({ content: 'An error occurred while trying to kick this member.', ephemeral: true });
+    }
+}
