@@ -36,6 +36,7 @@ module.exports = {
                     break;
                 case 'auth':
                     // Authorization logic here...
+                    await interaction.followUp({ content: 'This action requires authorization. Request sent to senior staff.' });
                     break;
                 case 'none':
                     await interaction.followUp({ content: "You do not have permission to use this command." });

@@ -23,7 +23,7 @@ module.exports = {
         try {
             const response = await axios.post(`https://api.ulti-bot.com/api/bot/guild/${interaction.guild.id}/check-permissions`, {
                 userRoles: Array.from(member.roles.cache.keys()),
-                commandName: 'kick' // Tell the backend which command we're checking
+                commandName: 'kick'
             }, {
                 headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
             });
@@ -36,6 +36,7 @@ module.exports = {
                     break;
                 case 'auth':
                     // Authorization logic here...
+                    await interaction.followUp({ content: 'This action requires authorization. Request sent to senior staff.' });
                     break;
                 case 'none':
                     await interaction.followUp({ content: "You do not have permission to use this command." });
