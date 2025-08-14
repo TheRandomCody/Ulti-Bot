@@ -20,13 +20,17 @@ module.exports = {
         const member = await interaction.guild.members.fetch(interaction.user.id);
         const targetMember = await interaction.guild.members.fetch(target.id);
 
+        const apiUrl = `https://api.ulti-bot.com/api/bot/guild/${interaction.guild.id}/check-permissions`;
+
         try {
-            const response = await axios.post(`https://api.ulti-bot.com/api/bot/guild/${interaction.guild.id}/check-permissions`, {
+            console.log(`[DEBUG] Attempting to call API: ${apiUrl}`);
+            const response = await axios.post(apiUrl, {
                 userRoles: Array.from(member.roles.cache.keys()),
                 commandName: 'kick'
             }, {
                 headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
             });
+            console.log('[DEBUG] API call successful.');
 
             const { permission, authLogChannelId, authRequestStyle } = response.data;
 
@@ -35,7 +39,6 @@ module.exports = {
                     await kickUser(interaction, targetMember, reason);
                     break;
                 case 'auth':
-                    // Authorization logic here...
                     await interaction.followUp({ content: 'This action requires authorization. Request sent to senior staff.' });
                     break;
                 case 'none':
@@ -51,8 +54,24 @@ module.exports = {
                     await interaction.followUp({ content: 'Could not determine your permissions.' });
             }
         } catch (error) {
-            console.error("Permission check API call failed:", error.response ? error.response.data : error.message);
-            await interaction.followUp({ content: 'An error occurred while checking your permissions.' });
+            // This new, more detailed logging will tell us exactly what is failing.
+            console.error("--- PERMISSION CHECK API CALL FAILED ---");
+            if (error.response) {
+                // The request was made and the server responded with a status code
+                // that falls out of the range of 2xx
+                console.error("Data:", error.response.data);
+                console.error("Status:", error.response.status);
+                console.error("Headers:", error.response.headers);
+            } else if (error.request) {
+                // The request was made but no response was received
+                console.error("Request:", error.request);
+            } else {
+                // Something happened in setting up the request that triggered an Error
+                console.error('Error Message:', error.message);
+            }
+            console.error("Config:", error.config);
+            console.error("------------------------------------");
+            await interaction.followUp({ content: 'An error occurred while checking your permissions. Please check the bot logs for details.' });
         }
     },
 };
