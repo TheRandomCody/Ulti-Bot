@@ -1,61 +1,86 @@
-// bot.js
+// File: bot.js
+// The main file for the Discord bot application.
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { Client, Collection, Events, GatewayIntentBits, REST, Routes } = require('discord.js');
+// --- 1. SETUP & IMPORTS ---
+require('dotenv').config();
+const { Client, GatewayIntentBits, Events } = require('discord.js');
+const axios = require('axios');
 
-const token = process.env.BOT_TOKEN;
-const clientId = process.env.CLIENT_ID;
+const { BOT_TOKEN, BACKEND_API_URL, CLIENT_SECRET } = process.env;
 
-if (!token || !clientId) {
-    console.error("FATAL ERROR: BOT_TOKEN or CLIENT_ID is not defined in the environment variables.");
-    process.exit(1);
-}
-
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-
-// --- COMMAND LOADING ---
-client.commands = new Collection();
-const commands = [];
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-
-for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    const command = require(filePath);
-    if ('data' in command && 'execute' in command) {
-        client.commands.set(command.data.name, command);
-        commands.push(command.data.toJSON());
+// --- 2. CONFIGURE AXIOS FOR API CALLS ---
+// Create a reusable axios instance to communicate with our backend.
+const api = axios.create({
+    baseURL: BACKEND_API_URL,
+    headers: {
+        'Authorization': `Bot ${CLIENT_SECRET}`, // Using CLIENT_SECRET as requested
+        'Content-Type': 'application/json'
     }
-}
+});
 
-// --- DEPLOY COMMANDS ---
-const rest = new REST({ version: '10' }).setToken(token);
-(async () => {
+// --- 3. DISCORD CLIENT SETUP ---
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds, // Required to receive server-related events
+    ]
+});
+
+// --- 4. EVENT LISTENERS (The Failsafe System) ---
+
+// Event: 'ready' - Fires once when the bot successfully logs in.
+client.once(Events.ClientReady, async (readyClient) => {
+    console.log(`✅ Logged in as ${readyClient.user.tag}`);
+    console.log('🔄 Performing initial server sync...');
+
     try {
-        console.log(`Started refreshing ${commands.length} application (/) commands.`);
-        await rest.put(
-            Routes.applicationCommands(clientId),
-            { body: commands },
-        );
-        console.log(`Successfully reloaded application (/) commands.`);
+        // Get a list of all servers the bot is currently in.
+        const guilds = await readyClient.guilds.fetch();
+
+        // Use a loop to sync each server one by one.
+        for (const [id, oauth2Guild] of guilds) {
+            try {
+                const guild = await oauth2Guild.fetch(); // Fetch full guild object to get ownerId
+                await api.post('/api/servers/sync', {
+                    serverId: guild.id,
+                    ownerId: guild.ownerId
+                });
+                console.log(`   - Synced server: ${guild.name} (${guild.id})`);
+            } catch (syncError) {
+                console.error(`   - Failed to sync server ${id}:`, syncError.response ? syncError.response.data : syncError.message);
+            }
+        }
+        console.log('✅ Initial server sync complete.');
+
     } catch (error) {
-        console.error('Error deploying commands:', error);
+        console.error('❌ Could not perform initial server sync:', error);
     }
-})();
+});
 
-// --- EVENT LOADING ---
-const eventsPath = path.join(__dirname, 'events');
-const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
-
-for (const file of eventFiles) {
-    const filePath = path.join(eventsPath, file);
-    const event = require(filePath);
-    if (event.once) {
-        client.once(event.name, (...args) => event.execute(...args, client));
-    } else {
-        client.on(event.name, (...args) => event.execute(...args, client));
+// Event: 'guildCreate' - Fires when the bot joins a new server.
+client.on(Events.GuildCreate, async (guild) => {
+    console.log(`👋 Joined a new server: ${guild.name} (${guild.id})`);
+    try {
+        await api.post('/api/servers/sync', {
+            serverId: guild.id,
+            ownerId: guild.ownerId
+        });
+        console.log(`   - Successfully registered ${guild.name} in the database.`);
+    } catch (error) {
+        console.error(`   - Failed to register ${guild.name}:`, error.response ? error.response.data : error.message);
     }
-}
+});
 
-client.login(token);
+// Event: 'guildDelete' - Fires when the bot is removed from a server.
+client.on(Events.GuildDelete, async (guild) => {
+    console.log(`😢 Left a server: ${guild.name} (${guild.id})`);
+    try {
+        await api.delete(`/api/servers/${guild.id}/sync`);
+        console.log(`   - Successfully removed ${guild.name} from the database.`);
+    } catch (error) {
+        console.error(`   - Failed to remove ${guild.name}:`, error.response ? error.response.data : error.message);
+    }
+});
+
+
+// --- 5. LOGIN ---
+client.login(BOT_TOKEN);
