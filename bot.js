@@ -8,6 +8,12 @@ const axios = require('axios');
 
 const { BOT_TOKEN, BACKEND_API_URL, CLIENT_SECRET } = process.env;
 
+// *** DEBUGGING STEP: Print the environment variable to the logs ***
+console.log('--- Bot Starting ---');
+console.log('API URL being used:', BACKEND_API_URL);
+console.log('--------------------');
+
+
 // --- 2. CONFIGURE AXIOS FOR API CALLS ---
 // Create a reusable axios instance to communicate with our backend.
 const api = axios.create({
