@@ -87,6 +87,15 @@ client.on(Events.GuildDelete, async (guild) => {
     }
 });
 
+// Event: 'messageCreate' - Fires every time a message is sent.
+// This is the entry point for the leveling system.
+client.on(Events.MessageCreate, async (message) => {
+    // Ignore bots and DMs
+    if (message.author.bot || !message.guild) return;
+
+    // Pass the message to the leveling handler
+    await handleMessageXP(message, api, client.cooldowns);
+});
 
 // --- 5. LOGIN ---
 client.login(BOT_TOKEN);
